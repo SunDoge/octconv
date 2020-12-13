@@ -5,3 +5,7 @@ __pycache__/
 .coverage
 /build/
 /dist/
+
+output/
+data/*
+.vscode/

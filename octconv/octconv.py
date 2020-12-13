@@ -14,7 +14,6 @@ class OctConv2d(nn.Module):
                  dilation=1,
                  groups=False,
                  bias=False):
-
         """
         Octave convolution from the 2019 article
         Drop an Octave: Reducing Spatial Redundancy in Convolutional Neural Networks with Octave Convolution
@@ -161,7 +160,7 @@ class OctConv2d(nn.Module):
             assert x_l.dim() == 4
 
         if self.in_channels['high'] > 0:
-            assert x_h.shape[1] == self.in_channels['high']
+            assert x_h.shape[1] == self.in_channels['high'], '{} != {}'.format(x_h.shape, self.in_channels['high'])
 
         if self.in_channels['low'] > 0:
             assert x_l.shape[1] == self.in_channels['low']

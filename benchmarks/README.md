@@ -26,3 +26,6 @@
 ### Multi-GPU
 
     NGPUS=4; python -m torch.distributed.launch --nproc_per_node ${NGPUS} train.py -c configs/cifar10/oct-resnet20.yml
+
+ResNet20: 91.87 / 99.75
+OctResNet20: 

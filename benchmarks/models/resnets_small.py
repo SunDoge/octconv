@@ -14,7 +14,8 @@ class ResNetSmall(nn.Module):
         self.layer1 = self._make_layer(block, 16, layers[0])
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.avg_pool = nn.AvgPool2d(8, stride=1)
+        # self.avg_pool = nn.AvgPool2d(8, stride=1)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(64 * block.expansion, num_classes)
 
         for m in self.modules():
@@ -51,7 +52,8 @@ class ResNetSmall(nn.Module):
         x = self.layer3(x)
 
         x = self.avg_pool(x)
-        x = x.view(x.size(0), -1)
+        # x = x.view(x.size(0), -1)
+        x = x.flatten(1)
         x = self.fc(x)
 
         return x

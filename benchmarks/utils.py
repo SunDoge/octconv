@@ -6,9 +6,14 @@ import sys
 import time
 from collections import defaultdict, deque
 from bisect import bisect_right
+from typing import List
 
 import torch
 import torch.distributed as dist
+import cv2
+import numpy as np
+from torchvision import transforms as T
+from torch import Tensor
 
 
 class SmoothedValue(object):
@@ -285,3 +290,36 @@ def setup_logger(name, save_dir, distributed_rank, filename="log.txt"):
         logger.addHandler(fh)
 
     return logger
+
+
+class RgbToYUV420:
+
+    def __init__(self, mean: List[float], std: List[float]) -> None:
+        super().__init__()
+        self._to_tensor = T.ToTensor()
+        self._normalize_y = T.Normalize(mean[0], std[0])
+        self._normalize_uv = T.Normalize(mean[1:], std[1:])
+
+    def __call__(self, pil_img):
+        npimg = np.array(pil_img, copy=False)
+        h, w, _c = npimg.shape
+        yuv420 = cv2.cvtColor(npimg, cv2.COLOR_RGB2YUV_I420)
+        y = yuv420[:h]
+        h1 = h * 5 // 4
+        h_half = h // 2
+        w_half = w // 2
+        u = yuv420[h:h1].reshape(h_half, w_half)
+        v = yuv420[h1:].reshape(h_half, w_half)
+        uv = np.stack([u, v], axis=2)
+        y_out = self._normalize_y(self._to_tensor(y))
+        uv_out = self._normalize_uv(self._to_tensor(uv))
+        return y_out, uv_out
+
+
+def to_device(xs, device):
+    if isinstance(xs, tuple):
+        return tuple(to_device(x, device) for x in xs)
+    elif isinstance(xs, list):
+        return tuple(to_device(x, device) for x in xs)
+    elif isinstance(xs, Tensor):
+        return xs.to(device, non_blocking=True)

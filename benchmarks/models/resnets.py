@@ -46,6 +46,9 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
             identity_h, identity_l = identity if isinstance(identity, tuple) else (identity, None)
 
+        print('identity_h:', identity_h.shape)
+        print('identity_l:', identity_l.shape if identity_l is not None else None)
+
         x_h += identity_h
         x_l = x_l + identity_l if identity_l is not None else None
 
@@ -124,7 +127,7 @@ class OctResNet(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
+        print(x.shape)
         x_h, x_l = self.layer1(x)
         x_h, x_l = self.layer2((x_h, x_l))
         x_h, x_l = self.layer3((x_h, x_l))
@@ -155,3 +158,13 @@ def oct_resnet101(**kwargs):
 def oct_resnet152(**kwargs):
     """Constructs a OctResNet-152 model."""
     return _oct_resnet(Bottleneck, [3, 8, 36, 3], **kwargs)
+
+
+
+if __name__ == "__main__":
+    import torch
+    x = torch.rand(2, 3, 224, 224)
+    model = oct_resnet50(alpha=0.5)
+    # y = model(x)
+    # print('y:', y.shape)
+    print(model)

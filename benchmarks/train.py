@@ -8,7 +8,8 @@ import torch
 import torch.distributed as dist
 import torch.utils.data
 from configargparse import ArgumentParser
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -18,6 +19,8 @@ from torchvision.models import resnet18, resnet34, resnet50, resnet101, resnet15
 import benchmarks.utils as utils
 from benchmarks.models.resnets import oct_resnet50, oct_resnet101, oct_resnet152
 from benchmarks.models.resnets_small import resnet20_small, resnet44_small, resnet56_small
+from benchmarks.models.oct_resnets_small import oct_resnet20_small
+
 
 models = {
     'resnet18': resnet18,
@@ -30,7 +33,8 @@ models = {
     'resnet56_small': resnet56_small,
     'oct_resnet50': oct_resnet50,
     'oct_resnet101': oct_resnet101,
-    'oct_resnet152': oct_resnet152
+    'oct_resnet152': oct_resnet152,
+    'oct_resnet20_small': oct_resnet20_small,
 }
 
 
@@ -51,6 +55,9 @@ def make_data_loader(root,
     elif dataset == 'cifar10':
         loader = _make_data_loader_cifar10(root=root, batch_size=batch_size, workers=workers,
                                            is_train=is_train, download=download, distributed=distributed)
+    elif dataset == 'cifar10_yuv':
+        loader = _make_data_loader_cifar10_yuv(root=root, batch_size=batch_size, workers=workers,
+                                               is_train=is_train, download=download, distributed=distributed)
     else:
         raise ValueError('Invalid dataset name')
 
@@ -136,7 +143,8 @@ def _make_data_loader_cifar10(root,
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
 
         dataset = CIFAR10(root=root, train=True,
@@ -156,7 +164,61 @@ def _make_data_loader_cifar10(root,
 
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        ])
+
+        dataset = CIFAR10(root=root, train=False,
+                          download=download, transform=transform)
+
+        if distributed:
+            sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+        else:
+            sampler = torch.utils.data.SequentialSampler(dataset)
+
+        loader = torch.utils.data.DataLoader(dataset,
+                                             batch_size=batch_size,
+                                             sampler=sampler,
+                                             num_workers=workers)
+
+    return loader
+
+
+def _make_data_loader_cifar10_yuv(root,
+                                  batch_size,
+                                  workers=4,
+                                  is_train=True,
+                                  download=False,
+                                  distributed=False):
+    logger = logging.getLogger('octconv')
+
+    if is_train:
+        logger.info('Loading CIFAR10 Training')
+
+        transform = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            utils.RgbToYUV420([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        ])
+
+        dataset = CIFAR10(root=root, train=True,
+                          download=download, transform=transform)
+
+        if distributed:
+            sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+        else:
+            sampler = torch.utils.data.RandomSampler(dataset)
+
+        loader = torch.utils.data.DataLoader(dataset,
+                                             batch_size=batch_size,
+                                             sampler=sampler,
+                                             num_workers=workers)
+    else:
+        logger.info('Loading CIFAR10 Test')
+
+        transform = transforms.Compose([
+            # transforms.ToTensor(),
+            utils.RgbToYUV420([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
 
         dataset = CIFAR10(root=root, train=False,
@@ -218,7 +280,8 @@ def train_one_epoch(model, criterion, optimizer, data_loader,
     iter_nr = iter_start
     for image, target in meters.log_every(data_loader, logger, print_freq, header):
 
-        image, target = image.to(device), target.to(device)
+        # image, target = image.to(device), target.to(device)
+        image, target = utils.to_device((image, target), device)
         output = model(image)
 
         loss = criterion(output, target)
@@ -240,7 +303,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader,
         optimizer.step()
 
         acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
-        batch_size = image.shape[0]
+        batch_size = target.shape[0]
 
         meters.update(loss=loss.item(), lr=optimizer.param_groups[0]["lr"])
         meters.meters['acc1'].update(acc1.item(), n=batch_size)
@@ -263,15 +326,16 @@ def evaluate(model, criterion, data_loader, device):
     header = 'Test:'
     with torch.no_grad():
         for image, target in metric_logger.log_every(data_loader, logger, 100, header):
-            image = image.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
+            # image = image.to(device, non_blocking=True)
+            # target = target.to(device, non_blocking=True)
+            image, target = utils.to_device((image, target), device)
             output = model(image)
             loss = criterion(output, target)
 
             acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
             # FIXME need to take into account that the datasets
             # could have been padded in distributed setup
-            batch_size = image.shape[0]
+            batch_size = target.shape[0]
             metric_logger.update(loss=loss.item())
             metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
             metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
@@ -335,6 +399,8 @@ def main(args):
         num_classes = 1000
     elif args.dataset == 'cifar10':
         num_classes = 10
+    elif args.dataset == 'cifar10_yuv':
+        num_classes = 10
     else:
         raise ValueError('Invalid dataset')
 
@@ -343,6 +409,9 @@ def main(args):
     kwargs = {'num_classes': num_classes}
     if args.arch.startswith('oct'):
         kwargs['alpha'] = args.alpha
+
+    if args.dataset == 'cifar10_yuv':
+        kwargs['yuv'] = True
 
     model = get_model(args.arch, **kwargs)
 
@@ -433,7 +502,7 @@ def main(args):
             best_acc1 = acc1
             best_acc5 = acc5
 
-        if args.output_dir:
+        if args.output_dir and acc1 == best_acc1:
             utils.save_on_master({
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
